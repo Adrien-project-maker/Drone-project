@@ -1,9 +1,8 @@
 /*
 InDev Drone ESP 32 WROOM 32 .V0
-27/08/2024
+27/08/2024 Bis
 
-Nouvelle vesrion du drone obluge : modifications des associations des moteurs aux pins et quelques réglages mineurs
-*/
+Lecture du gyroscope avec le protocole I²C mais problème d'adressage car impossible de trouver celle correspondant au LSM303. +Correction de commentaires éronnés*/
 
 // Appel des differentes librairies
 #include <Arduino.h>
@@ -17,6 +16,8 @@ Nouvelle vesrion du drone obluge : modifications des associations des moteurs au
 #include <Adafruit_L3GD20_U.h>
 #include <Adafruit_10DOF.h>
 
+// On utilise le protocole I²C
+#define USE_I2C
 
 // On associe les moteurs à des broches capables d'emettre une fréquence
 #define Moteur_avant_droit       12
@@ -103,6 +104,21 @@ void initSensors()
 
 // On récupère dans l'orientation du drone sur l'axe X Y Z dans cette fonction
 void gyro_signals(void) {
+  Wire.beginTransmission(0x68);
+  Wire.write(0x1A);
+  Wire.write(0x05);
+  Wire.endTransmission();
+  Wire.beginTransmission(0x68);
+  Wire.write(0x1B);
+  Wire.write(0x08);
+  Wire.endTransmission();
+  Wire.beginTransmission(0x68);
+  Wire.write(0x43);
+  Wire.endTransmission(); 
+  Wire.requestFrom(0x68,6);
+  int16_t GyroX=Wire.read()<<8 | Wire.read();
+  int16_t GyroY=Wire.read()<<8 | Wire.read();
+  int16_t GyroZ=Wire.read()<<8 | Wire.read();
 
   // On donne un identifiant à chaque capteurs
   sensors_vec_t   orientation;
@@ -116,15 +132,15 @@ void gyro_signals(void) {
     int GyroX = orientation.roll;
     int GyroY = orientation.pitch;
 
-    RateRoll=(float)GyroX/65.5;
-    RatePitch=(float)GyroY/65.5;
+    RateRoll=(float)GyroX/65;
+    RatePitch=(float)GyroY/65;
 
-    /*Serial.print("GyroX ");
-    Serial.print(GyroX);
+    Serial.print("RateRoll ");
+    Serial.print(RateRoll);
     Serial.println("");
-    Serial.print("GyroY ");
-    Serial.print(GyroY);
-    Serial.println("");*/
+    Serial.print("RatePitch");
+    Serial.print(RatePitch);
+    Serial.println("");
   }
 
   // Même chose pour le Yaw
@@ -132,11 +148,11 @@ void gyro_signals(void) {
   if (dof.magGetOrientation(SENSOR_AXIS_Z, &mag_event, &orientation)){
     int GyroZ = orientation.heading;
 
-    RateYaw=(float)GyroZ/65.5;
+    RateYaw=(float)GyroZ/65;
     
-    /*Serial.print("GyroZ ");
-    Serial.print(GyroZ);
-    Serial.println("");*/
+    Serial.print("RateYaw");
+    Serial.print(RateYaw);
+    Serial.println("");
   }
 }
 
@@ -182,15 +198,16 @@ void setup() {
   Serial.begin(9600);
   Serial.println("Go");
 
-  // On récupere l'orientation initiale du drone
+  // On récupere une fois par milliseconde l'orientation initiale du drone pendant 2 secondes
   for (RateCalibrationNumber=0; RateCalibrationNumber<2000; RateCalibrationNumber ++) {
     // On fait appel à la fonction qui lit les valeurs du gyroscope
     gyro_signals();
-    // On y opère les premières opération pour convertir l'orientation dans un ordre de grandeur compatible
+    // On ajoute les valeurs lues aux variables de corrections
     RateCalibrationRoll+=RateRoll;
     RateCalibrationPitch+=RatePitch;
     RateCalibrationYaw+=RateYaw;
     delay(1);
+    // On récupere la valeur moyenne sur le total des valeurs lues en 2 secondes
     RateCalibrationRoll/=2000;
     RateCalibrationPitch/=2000;
     RateCalibrationYaw/=2000;
@@ -211,7 +228,6 @@ void setup() {
 }
 
 void loop() {
- 
   // On vérifie si on reçoit des information de la radio de la manette
   if(radio.available()) {
     // On opére nos calculs tant que l'on reçoit les informations nécessaires au contrôle du drone
@@ -226,6 +242,7 @@ void loop() {
 
       // Appel de la fonction qui lit l'orientation du drone
       gyro_signals();
+      // Correction des veleurs lues pour avoir une orientation de 0°/s au sol
       RateRoll-=RateCalibrationRoll;
       RatePitch-=RateCalibrationPitch;
       RateYaw-=RateCalibrationYaw;
@@ -288,9 +305,18 @@ void loop() {
       ESC_Moteur_arriere_gauche.writeMicroseconds(MotorInput3);
       ESC_Moteur_arriere_droit.writeMicroseconds(MotorInput4);
       // avec une petite pause, avant de reboucler
+      Serial.print("MotorInput1");
       Serial.print(MotorInput1);
-      Serial.print("  ");
-
+      Serial.print("");
+      Serial.print("MotorInput2");
+      Serial.print(MotorInput2);
+      Serial.print("");
+      Serial.print("MotorInput3");
+      Serial.print(MotorInput3);
+      Serial.print("");
+      Serial.print("MotorInput4");
+      Serial.println(MotorInput4);
+      Serial.println("");
       delay(20);
     }
   }
