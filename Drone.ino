@@ -1,6 +1,8 @@
 /*
 InDev Drone ESP 32 WROOM 32 .V0
-07/07/2024
+27/08/2024
+
+Nouvelle vesrion du drone obluge : modifications des associations des moteurs aux pins et quelques réglages mineurs
 */
 
 // Appel des differentes librairies
@@ -17,11 +19,11 @@ InDev Drone ESP 32 WROOM 32 .V0
 
 
 // On associe les moteurs à des broches capables d'emettre une fréquence
-#define Moteur_avant_droit       14
-#define Moteur_avant_gauche      27
+#define Moteur_avant_droit       12
+#define Moteur_avant_gauche      14
 
-#define Moteur_arriere_droit           12
-#define Moteur_arriere_gauche          26
+#define Moteur_arriere_droit           26
+#define Moteur_arriere_gauche          27
 
 // Broches de l'antenne NRF24L01
 #define pinCE     0
@@ -117,12 +119,12 @@ void gyro_signals(void) {
     RateRoll=(float)GyroX/65.5;
     RatePitch=(float)GyroY/65.5;
 
-    Serial.print("GyroX ");
+    /*Serial.print("GyroX ");
     Serial.print(GyroX);
     Serial.println("");
     Serial.print("GyroY ");
     Serial.print(GyroY);
-    Serial.println("");
+    Serial.println("");*/
   }
 
   // Même chose pour le Yaw
@@ -132,9 +134,9 @@ void gyro_signals(void) {
 
     RateYaw=(float)GyroZ/65.5;
     
-    Serial.print("GyroZ ");
+    /*Serial.print("GyroZ ");
     Serial.print(GyroZ);
-    Serial.println("");
+    Serial.println("");*/
   }
 }
 
@@ -254,7 +256,7 @@ void loop() {
 
       /* Si la puissance des moteurs est trop basse, on ne prend pas en compte les opérations de stabilisation
       afin de ne pas handicaper le drone au décollage */
-      int ThrottleIdle=1180;
+      int ThrottleIdle=1345;
       if (1050 <= MotorInput1 < ThrottleIdle) MotorInput1 =  InputThrottle;
       if (1050 <= MotorInput2 < ThrottleIdle) MotorInput2 =  InputThrottle;
       if (1050 <= MotorInput3 < ThrottleIdle) MotorInput3 =  InputThrottle;
@@ -286,6 +288,9 @@ void loop() {
       ESC_Moteur_arriere_gauche.writeMicroseconds(MotorInput3);
       ESC_Moteur_arriere_droit.writeMicroseconds(MotorInput4);
       // avec une petite pause, avant de reboucler
+      Serial.print(MotorInput1);
+      Serial.print("  ");
+
       delay(20);
     }
   }
