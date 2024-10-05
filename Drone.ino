@@ -1,8 +1,9 @@
 /*
-InDev Drone ESP 32 WROOM 32 .V0
-27/08/2024 Bis
+InDev Drone ESP 32 WROOM 32 .V0.1
+05/10/2024
 
-Lecture du gyroscope avec le protocole I²C mais problème d'adressage car impossible de trouver celle correspondant au LSM303. +Correction de commentaires éronnés*/
+Lecture du gyroscope avec le protocole I²C, variation anormale des valeurs X, Y, Z, ce malgrès le Low Pass Filter, d'un
+filtre logiciel agressif pour lisser les valeurs, et de la compensation de l'offset :( */
 
 // Appel des differentes librairies
 #include <Arduino.h>
@@ -64,8 +65,8 @@ int ImpulsionPitch;
 int ImpulsionYaw;
 
 // Déclarationn des variables pour l'asservissement PID (donc en anglais)
-float RatePitch, RateRoll, RateYaw;
-float RateCalibrationPitch, RateCalibrationRoll, RateCalibrationYaw;
+float  RateRoll, RatePitch, RateYaw;
+float RateCalibrationRoll, RateCalibrationPitch, RateCalibrationYaw;
 int RateCalibrationNumber;
 uint32_t LoopTimer;
 float DesiredRateRoll, DesiredRatePitch, DesiredRateYaw;
@@ -78,6 +79,13 @@ float PRateRoll=0.6 ; float PRatePitch=PRateRoll; float PRateYaw=2;
 float IRateRoll=3.5 ; float IRatePitch=IRateRoll; float IRateYaw=12;
 float DRateRoll=0.03 ; float DRatePitch=DRateRoll; float DRateYaw=0;
 float MotorInput1, MotorInput2, MotorInput3, MotorInput4;
+// Alpha est un facteur de lissage compris entre 0 et 1 (par exemple, 0.1 pour un filtrage plus fort)
+float alpha = 0.05;
+
+// Variables pour stocker les mesures filtrées
+float gyro_X_filtered = 0;
+float gyro_Y_filtered = 0;
+float gyro_Z_filtered = 0;
 
 // Puissance des moteurs à l'arret
 int ThrottleCutOff=1000;
@@ -102,58 +110,62 @@ void initSensors()
   }
 }
 
+uint8_t i2c_read(uint8_t device_address, uint8_t register_address) {
+  Wire.beginTransmission(device_address);
+  Wire.write(register_address);  // Envoi de l'adresse du registre à lire
+  Wire.endTransmission(false);   // Reprise de la communication sans "stop"
+  Wire.requestFrom(device_address, 1);  // Demande d'un octet
+
+  // Attendre la réception de l'octet
+  while (Wire.available() == 0);
+
+  return Wire.read();  // Retourne l'octet lu
+}
+
+void i2c_write(uint8_t device_address, uint8_t register_address, uint8_t data) {
+  Wire.beginTransmission(device_address);
+  Wire.write(register_address);  // Envoi de l'adresse du registre
+  Wire.write(data);              // Envoi de la donnée
+  Wire.endTransmission();        // Stop de la transmission
+}
+
+void low_pass_filter(int16_t X, int16_t Y, int16_t Z) {
+    gyro_X_filtered = alpha * X + (1.0 - alpha) * gyro_X_filtered;
+    gyro_Y_filtered = alpha * Y + (1.0 - alpha) * gyro_Y_filtered;
+    gyro_Z_filtered = alpha * Z + (1.0 - alpha) * gyro_Z_filtered;
+}
+
 // On récupère dans l'orientation du drone sur l'axe X Y Z dans cette fonction
 void gyro_signals(void) {
-  Wire.beginTransmission(0x68);
-  Wire.write(0x1A);
-  Wire.write(0x05);
-  Wire.endTransmission();
-  Wire.beginTransmission(0x68);
-  Wire.write(0x1B);
-  Wire.write(0x08);
-  Wire.endTransmission();
-  Wire.beginTransmission(0x68);
-  Wire.write(0x43);
-  Wire.endTransmission(); 
-  Wire.requestFrom(0x68,6);
-  int16_t GyroX=Wire.read()<<8 | Wire.read();
-  int16_t GyroY=Wire.read()<<8 | Wire.read();
-  int16_t GyroZ=Wire.read()<<8 | Wire.read();
+  // Initialisation du L3GD20
+  i2c_write(0x6B, 0x20, 0x0F); // Activer le gyroscope (CTRL_REG1)
+  i2c_write(0x6B, 0x23, 0x20); // Configurer la pleine échelle à ±2000 dps (CTRL_REG4)
+  i2c_write(0x6B, 0x20, 0x0F); // Configuration de Low Pass Filter
 
-  // On donne un identifiant à chaque capteurs
-  sensors_vec_t   orientation;
-  sensors_event_t accel_event;
-  sensors_event_t mag_event;
-  sensors_event_t bmp_event;
+  // Lecture des données sur X, Y, Z
+  int8_t OUT_X_L = i2c_read(0x6B, 0x28);
+  int8_t OUT_X_H = i2c_read(0x6B, 0x29);
+  int8_t OUT_Y_L = i2c_read(0x6B, 0x2A);
+  int8_t OUT_Y_H = i2c_read(0x6B, 0x2B);
+  int8_t OUT_Z_L = i2c_read(0x6B, 0x2C);
+  int8_t OUT_Z_H = i2c_read(0x6B, 0x2D);
 
-  // Si on a accès à l'orientation on la stocke dans une variable
-  accel.getEvent(&accel_event);
-  if (dof.accelGetOrientation(&accel_event, &orientation)){
-    int GyroX = orientation.roll;
-    int GyroY = orientation.pitch;
+  // Combiner les octets pour obtenir des valeurs 16 bits
+  int16_t X = (OUT_X_H << 8) | OUT_X_L;
+  int16_t Y = (OUT_Y_H << 8) | OUT_Y_L;
+  int16_t Z = (OUT_Z_H << 8) | OUT_Z_L;
 
-    RateRoll=(float)GyroX/65;
-    RatePitch=(float)GyroY/65;
+  // Appliquer le filtre passe-bas
+  low_pass_filter(X, Y, Z);
 
-    Serial.print("RateRoll ");
-    Serial.print(RateRoll);
-    Serial.println("");
-    Serial.print("RatePitch");
-    Serial.print(RatePitch);
-    Serial.println("");
-  }
+  // Conversion en LSB/°/s (pour ±2000 dps, la sensibilité est 70 LSB/°/s)
+  float Sensibility = 70.0;
+  RateRoll = X * Sensibility;
+  RatePitch = Y * Sensibility;
+  RateYaw = Z * Sensibility;
+  delay(50);
 
-  // Même chose pour le Yaw
-  mag.getEvent(&mag_event);
-  if (dof.magGetOrientation(SENSOR_AXIS_Z, &mag_event, &orientation)){
-    int GyroZ = orientation.heading;
-
-    RateYaw=(float)GyroZ/65;
-    
-    Serial.print("RateYaw");
-    Serial.print(RateYaw);
-    Serial.println("");
-  }
+  // !!!!!!!!!!!!!!!!!!!! Le mode de lecture des gyros à changé : adapter le code !!!!!!!!!!!!!!!!!
 }
 
 // On prépare les opérations à faire pour y faire appel plus tard dans le loop 
@@ -197,6 +209,10 @@ void setup() {
   // Démarrage du moniteur serie
   Serial.begin(9600);
   Serial.println("Go");
+  // Setup clock speed
+  Wire.setClock(400000);
+  Wire.begin();
+  delay(250);
 
   // On récupere une fois par milliseconde l'orientation initiale du drone pendant 2 secondes
   for (RateCalibrationNumber=0; RateCalibrationNumber<2000; RateCalibrationNumber ++) {
@@ -207,11 +223,12 @@ void setup() {
     RateCalibrationPitch+=RatePitch;
     RateCalibrationYaw+=RateYaw;
     delay(1);
-    // On récupere la valeur moyenne sur le total des valeurs lues en 2 secondes
+  }
+  // On récupere la valeur moyenne sur le total des valeurs lues en 2 secondes
     RateCalibrationRoll/=2000;
     RateCalibrationPitch/=2000;
     RateCalibrationYaw/=2000;
-  }
+
   // Initialisation du module NRF24
   radio.begin();
   // Ouverture du tunnel en LECTURE, avec le "nom" qu'on lui a donné    
@@ -246,6 +263,18 @@ void loop() {
       RateRoll-=RateCalibrationRoll;
       RatePitch-=RateCalibrationPitch;
       RateYaw-=RateCalibrationYaw;
+
+      Serial.print("RateRoll ");
+      Serial.print(RateRoll);
+      Serial.println("");
+      Serial.print("RatePitch ");
+      Serial.print(RatePitch);
+      Serial.println("");
+      Serial.print("RateYaw ");
+      Serial.print(RateYaw);
+      Serial.println("");
+      delay(500);
+
       // On prend en compte les commandes de la manette
       DesiredRateRoll=0.15*(Roll-1500);
       DesiredRatePitch=0.15*(Pitch-1500);
@@ -305,7 +334,7 @@ void loop() {
       ESC_Moteur_arriere_gauche.writeMicroseconds(MotorInput3);
       ESC_Moteur_arriere_droit.writeMicroseconds(MotorInput4);
       // avec une petite pause, avant de reboucler
-      Serial.print("MotorInput1");
+      /*Serial.print("MotorInput1");
       Serial.print(MotorInput1);
       Serial.print("");
       Serial.print("MotorInput2");
@@ -316,8 +345,7 @@ void loop() {
       Serial.print("");
       Serial.print("MotorInput4");
       Serial.println(MotorInput4);
-      Serial.println("");
-      delay(20);
+      Serial.println("");*/
     }
   }
   // SÉCURITÉ : ON DÉSACTIVE LES MOTEURS SI ON NE CAPTE PAS LA MANETTE
