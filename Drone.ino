@@ -1,9 +1,8 @@
 /*
-InDev Drone ESP 32 WROOM 32 .V0.1
-05/10/2024
+InDev Drone ESP 32 WROOM 32 .V0.2
+06/10/2024
 
-Lecture du gyroscope avec le protocole I²C, variation anormale des valeurs X, Y, Z, ce malgrès le Low Pass Filter, d'un
-filtre logiciel agressif pour lisser les valeurs, et de la compensation de l'offset :( */
+La lecture du gyro par protocole I2c fonctionne à merveille !*/
 
 // Appel des differentes librairies
 #include <Arduino.h>
@@ -37,13 +36,6 @@ filtre logiciel agressif pour lisser les valeurs, et de la compensation de l'off
 
 // On donne le nom "PIPE1" au tunnel de communication utilisé
 #define tunnel  "PIPE1"
-
-// On assigne un identifiant unique aux capteurs
-Adafruit_10DOF                dof   = Adafruit_10DOF();
-Adafruit_LSM303_Accel_Unified accel = Adafruit_LSM303_Accel_Unified(30301);
-Adafruit_LSM303_Mag_Unified   mag   = Adafruit_LSM303_Mag_Unified(30302);
-Adafruit_BMP085_Unified       bmp   = Adafruit_BMP085_Unified(18001);
-
 
 // Instanciation du NRF24L01
 RF24 radio(pinCE, pinCSN);
@@ -80,7 +72,7 @@ float IRateRoll=3.5 ; float IRatePitch=IRateRoll; float IRateYaw=12;
 float DRateRoll=0.03 ; float DRatePitch=DRateRoll; float DRateYaw=0;
 float MotorInput1, MotorInput2, MotorInput3, MotorInput4;
 // Alpha est un facteur de lissage compris entre 0 et 1 (par exemple, 0.1 pour un filtrage plus fort)
-float alpha = 0.05;
+float alpha = 0.1;
 
 // Variables pour stocker les mesures filtrées
 float gyro_X_filtered = 0;
@@ -89,26 +81,6 @@ float gyro_Z_filtered = 0;
 
 // Puissance des moteurs à l'arret
 int ThrottleCutOff=1000;
-
-// On Vérifie que l'on a accès aux différents capteurs
-void initSensors()
-{
-  if(!accel.begin()){
-    // On envoi un message dans le moniteur serie si on ne détecte pas le capteur
-    Serial.println(F("Pas de LSM303 détecté, vérifiez vos cablages !"));
-    while(1);
-  }
-  if(!mag.begin()){
-    // On envoi un message dans le moniteur serie si on ne détecte pas le capteur
-    Serial.println("Pas de LSM303 détecté, vérifiez vos cablages !");
-    while(1);
-  }
-  if(!bmp.begin()){
-    // On envoi un message dans le moniteur serie si on ne détecte pas le capteur
-    Serial.println("Pas de BMP180 détecté, vérifiez vos cablages !");
-    while(1);
-  }
-}
 
 uint8_t i2c_read(uint8_t device_address, uint8_t register_address) {
   Wire.beginTransmission(device_address);
@@ -141,6 +113,9 @@ void gyro_signals(void) {
   i2c_write(0x6B, 0x20, 0x0F); // Activer le gyroscope (CTRL_REG1)
   i2c_write(0x6B, 0x23, 0x20); // Configurer la pleine échelle à ±2000 dps (CTRL_REG4)
   i2c_write(0x6B, 0x20, 0x0F); // Configuration de Low Pass Filter
+  /*int8_t status_reg = i2c_read(0x6B, 0x27);
+  Serial.print("satus_reg :");
+  Serial.print(status_reg);*/
 
   // Lecture des données sur X, Y, Z
   int8_t OUT_X_L = i2c_read(0x6B, 0x28);
@@ -160,11 +135,9 @@ void gyro_signals(void) {
 
   // Conversion en LSB/°/s (pour ±2000 dps, la sensibilité est 70 LSB/°/s)
   float Sensibility = 70.0;
-  RateRoll = X * Sensibility;
-  RatePitch = Y * Sensibility;
-  RateYaw = Z * Sensibility;
-  delay(50);
-
+  RateRoll = X / Sensibility;
+  RatePitch = Y / Sensibility;
+  RateYaw = Z / Sensibility;
   // !!!!!!!!!!!!!!!!!!!! Le mode de lecture des gyros à changé : adapter le code !!!!!!!!!!!!!!!!!
 }
 
@@ -191,7 +164,6 @@ void reset_pid(void) {
 
 
 void setup() {
-  initSensors();
   // Configuration des pins de sortie de l'ESP 32
   pinMode(MotorInput1, OUTPUT);
   pinMode(MotorInput2, OUTPUT);
@@ -256,7 +228,6 @@ void loop() {
       int Roll = 1500;
       int Yaw = 1500;
       int Pitch = 1500;
-
       // Appel de la fonction qui lit l'orientation du drone
       gyro_signals();
       // Correction des veleurs lues pour avoir une orientation de 0°/s au sol
@@ -264,7 +235,7 @@ void loop() {
       RatePitch-=RateCalibrationPitch;
       RateYaw-=RateCalibrationYaw;
 
-      Serial.print("RateRoll ");
+      /*Serial.print("RateRoll ");
       Serial.print(RateRoll);
       Serial.println("");
       Serial.print("RatePitch ");
@@ -272,8 +243,7 @@ void loop() {
       Serial.println("");
       Serial.print("RateYaw ");
       Serial.print(RateYaw);
-      Serial.println("");
-      delay(500);
+      Serial.println("");*/
 
       // On prend en compte les commandes de la manette
       DesiredRateRoll=0.15*(Roll-1500);
@@ -334,7 +304,7 @@ void loop() {
       ESC_Moteur_arriere_gauche.writeMicroseconds(MotorInput3);
       ESC_Moteur_arriere_droit.writeMicroseconds(MotorInput4);
       // avec une petite pause, avant de reboucler
-      /*Serial.print("MotorInput1");
+      Serial.print("MotorInput1");
       Serial.print(MotorInput1);
       Serial.print("");
       Serial.print("MotorInput2");
@@ -345,7 +315,7 @@ void loop() {
       Serial.print("");
       Serial.print("MotorInput4");
       Serial.println(MotorInput4);
-      Serial.println("");*/
+      Serial.println("");
     }
   }
   // SÉCURITÉ : ON DÉSACTIVE LES MOTEURS SI ON NE CAPTE PAS LA MANETTE
